@@ -1,0 +1,7 @@
+pyTelegramBotAPI
+google-generativeai
+requests
+python-dotenv
+tensorflow
+Pillow
+numpy
