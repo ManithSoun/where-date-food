@@ -6,8 +6,6 @@ from services.places_service import find_restaurants
 client = Groq(api_key=GROQ_API_KEY)
 
 MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
-
-# ─── Tool Definition ──────────────────────────────────────────────────────────
 tools = [
     {
         "type": "function",
@@ -43,9 +41,17 @@ When presenting restaurant results:
 - NO closing message
 - Keep it clean and scannable
 
-When user asks follow-up questions about results:
-- Answer directly from the context of previous results
-- Be helpful and conversational
+When user asks ANY follow-up question about the results already shown such as:
+- Price related: "cheapest", "most expensive", "under $5", "budget option"
+- Distance related: "closest", "nearest", "walking distance"  
+- Rating related: "best rated", "highest rated", "most popular"
+- Info related: "tell me more about #1", "what's the address", "open now?"
+- Comparison: "compare the first two", "which is better"
+
+ALWAYS answer from the previous results. NEVER call get_restaurant again for these.
+Only call get_restaurant when user asks for a completely NEW food type.
+Answer directly from the context of previous results.
+Be helpful and conversational
 
 General rules:
 - Keep responses short and friendly
@@ -53,7 +59,6 @@ General rules:
 - No yapping or unnecessary filler sentences
 - Always respond in the same language the user uses"""
 
-# ─── Chat Sessions ────────────────────────────────────────────────────────────
 chat_sessions = {}
 
 def get_history(chat_id: int):
@@ -105,7 +110,6 @@ def chat_with_agent(chat_id: int, message: str, lat: float = None, lng: float = 
           if not restaurants:
               return f"Sorry, I couldn't find any {preference} restaurants nearby. Try a different area!"
 
-          # Format directly — no second Groq call needed
           lines = [f"🍽️ *{preference.title()}* spots near you:\n"]
           lines = [f"🍽️ {preference.title()} spots near you:\n"]
           

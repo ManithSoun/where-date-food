@@ -5,6 +5,17 @@ from tensorflow.keras.applications.efficientnet import preprocess_input
 from PIL import Image
 from io import BytesIO
 from config import MODEL_PATH, CLASS_LABELS_PATH, IMG_SIZE
+import os
+import gdown
+
+MODEL_PATH = "best_model_b3.keras"
+GDRIVE_FILE_ID = "1sB6bPdNaNLSAmExj2O-mvEeV-Y9b3HrR"
+
+#download model (if not present)
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model from Google Drive...")
+    gdown.download(f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}", MODEL_PATH, quiet=False)
+    print("Model downloaded!")
 
 print("Loading food classifier...")
 model = tf.keras.models.load_model(MODEL_PATH)
