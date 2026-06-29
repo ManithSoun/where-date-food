@@ -1,13 +1,41 @@
+import threading
 import telebot
 from config import TELEGRAM_TOKEN
 from services.classifier_service import classify_food
 from services.gemini_service import chat_with_agent, clear_chat
-import threading
+from services.places_service import parse_radius
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Store user location
 user_location = {}
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def get_loc(chat_id):
+    loc = user_location.get(chat_id)
+    if loc:
+        return loc["lat"], loc["lng"]
+    return None, None
+
+def send_typing_loop(chat_id, stop_event):
+    while not stop_event.is_set():
+        try:
+            bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        stop_event.wait(4)
+
+def reply_with_typing(chat_id, message, agent_fn):
+    stop = threading.Event()
+    t = threading.Thread(target=send_typing_loop, args=(chat_id, stop))
+    t.start()
+    try:
+        response = agent_fn()
+    finally:
+        stop.set()
+        t.join()
+    bot.reply_to(message, response)
+
 
 # ─── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -36,9 +64,9 @@ def help_command(message):
         "2️⃣ Type what you're craving or send a food photo\n"
         "3️⃣ Ask follow-up questions about the results!\n\n"
         "Examples:\n"
-        "• 'I want ramen'\n"
-        "• 'Which one is cheapest?'\n"
-        "• 'Is there parking nearby?'\n\n"
+        "• 'I want ramen near me'\n"
+        "• 'Find pho within 2 km'\n"
+        "• 'Which one is cheapest?'\n\n"
         "Use /start to reset the conversation.",
         parse_mode="Markdown"
     )
@@ -56,59 +84,40 @@ def handle_location(message):
     lng = message.location.longitude
     user_location[chat_id] = {"lat": lat, "lng": lng}
 
-    # Check if there's a pending food request in chat history
-    bot.send_chat_action(chat_id, "typing")
-    response = chat_with_agent(
-        chat_id,
-        "I just shared my location. If I previously mentioned a food I want, please search for it now.",
-        lat,
-        lng
-    )
-    bot.reply_to(message, response)
+    prompt = "I just shared my location. If I previously mentioned a food I want, please search for it now."
+    reply_with_typing(chat_id, message, lambda: chat_with_agent(chat_id, prompt, lat, lng))
 
 @bot.message_handler(content_types=["photo"])
 def handle_photo(message):
     chat_id = message.chat.id
-    bot.reply_to(message, "Analyzing your food photo...")
+    lat, lng = get_loc(chat_id)
 
+    bot.send_chat_action(chat_id, "typing")
     file_id = message.photo[-1].file_id
     file_info = bot.get_file(file_id)
     image_bytes = bot.download_file(file_info.file_path)
-
     food, confidence = classify_food(image_bytes)
 
-    loc = user_location.get(chat_id)
-    lat = loc["lat"] if loc else None
-    lng = loc["lng"] if loc else None
+    if not lat:
+        bot.reply_to(
+            message,
+            f"🍽️ Looks like *{food}*! (confidence: {confidence:.0%})\n\n"
+            "Share your location so I can find nearby spots 📍",
+            parse_mode="Markdown"
+        )
+        return
 
     if confidence < 0.5:
-        bot.reply_to(message,
-            f"🤔 This looks like it could be {food} (confidence: {confidence:.0%})\n\n"
-            f"If that's wrong, just type what food you actually want and I'll search for it!"
+        bot.reply_to(
+            message,
+            f"🤔 This looks like it could be *{food}* (confidence: {confidence:.0%})\n\n"
+            "If that's wrong, just type what food you actually want!",
+            parse_mode="Markdown"
         )
-        user_state[chat_id] = {"food": food}
-    else:
-        message_to_agent = f"I'm craving {food}. Find me nearby restaurants."
-        response = chat_with_agent(chat_id, message_to_agent, lat, lng)
-        bot.reply_to(message, response)
+        return
 
-    loc = user_location.get(chat_id)
-    lat = loc["lat"] if loc else None
-    lng = loc["lng"] if loc else None
-
-    message_to_agent = f"I'm craving {food} (identified from photo with {confidence:.0%} confidence). Find me nearby restaurants."
-    response = chat_with_agent(chat_id, message_to_agent, lat, lng)
-
-    if not loc:
-        response = f"🍽️ Looks like *{food}*! (confidence: {confidence:.0%})\n\nShare your location so I can find nearby spots 📍"
-
-    bot.reply_to(message, response)
-    
-def send_typing(chat_id):
-    try:
-        bot.send_chat_action(chat_id, "typing")
-    except:
-        pass
+    prompt = f"I'm craving {food} (identified from photo, {confidence:.0%} confidence). Find me nearby restaurants."
+    reply_with_typing(chat_id, message, lambda: chat_with_agent(chat_id, prompt, lat, lng))
 
 @bot.message_handler(content_types=["text"])
 def handle_text(message):
@@ -116,26 +125,10 @@ def handle_text(message):
         return
 
     chat_id = message.chat.id
-    loc = user_location.get(chat_id)
-    lat = loc["lat"] if loc else None
-    lng = loc["lng"] if loc else None
+    lat, lng = get_loc(chat_id)
+    text = message.text
 
-    threading.Thread(target=send_typing, args=(chat_id,)).start()
-    response = chat_with_agent(chat_id, message.text, lat, lng)
-    bot.reply_to(message, response)
-
-@bot.message_handler(content_types=["text"])
-def handle_text(message):
-    if message.text.startswith("/"):
-        return
-
-    chat_id = message.chat.id
-    loc = user_location.get(chat_id)
-    lat = loc["lat"] if loc else None
-    lng = loc["lng"] if loc else None
-
-    response = chat_with_agent(chat_id, message.text, lat, lng)
-    bot.reply_to(message, response)
+    reply_with_typing(chat_id, message, lambda: chat_with_agent(chat_id, text, lat, lng))
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
